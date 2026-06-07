@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Maze Game</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d0d1a;
+    color: #e0e0ff;
+    font-family: 'Courier New', monospace;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    gap: 16px;
+  }
+  h1 { font-size: 1.6rem; letter-spacing: 4px; color: #7ec8e3; text-transform: uppercase; }
+  #stats {
+    display: flex;
+    gap: 32px;
+    font-size: 0.95rem;
+    color: #aaa;
+  }
+  #stats span { color: #fff; }
+  canvas {
+    border: 2px solid #2a2a4a;
+    border-radius: 4px;
+    image-rendering: pixelated;
+  }
+  #controls {
+    font-size: 0.8rem;
+    color: #555;
+    text-align: center;
+    line-height: 1.8;
+  }
+  #controls kbd {
+    background: #1e1e3a;
+    border: 1px solid #3a3a6a;
+    border-radius: 3px;
+    padding: 1px 6px;
+    color: #9090cc;
+  }
+  #win-msg {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 20px;
+  }
+  #win-msg h2 { font-size: 2rem; color: #ffe066; letter-spacing: 3px; }
+  #win-msg p  { color: #aaa; }
+  button {
+    background: #1e1e3a;
+    border: 1px solid #7ec8e3;
+    color: #7ec8e3;
+    padding: 8px 24px;
+    font-family: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    letter-spacing: 2px;
+    border-radius: 3px;
+    transition: background 0.15s;
+  }
+  button:hover { background: #2a2a5a; }
+  #size-row {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    font-size: 0.85rem;
+    color: #777;
+  }
+  select {
+    background: #1e1e3a;
+    border: 1px solid #3a3a6a;
+    color: #ccc;
+    padding: 3px 8px;
+    font-family: inherit;
+    border-radius: 3px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Maze</h1>
+
+<div id="size-row">
+  Size:
+  <select id="size">
+    <option value="10,7">Small (10×7)</option>
+    <option value="18,12" selected>Medium (18×12)</option>
+    <option value="28,18">Large (28×18)</option>
+    <option value="40,25">XL (40×25)</option>
+  </select>
+  <button onclick="newGame()">New Game</button>
+</div>
+
+<div id="stats">
+  Steps: <span id="steps">0</span>
+  &nbsp;&nbsp;Time: <span id="timer">0.0s</span>
+</div>
+
+<canvas id="c"></canvas>
+
+<div id="controls">
+  <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> or <kbd>W</kbd><kbd>S</kbd><kbd>A</kbd><kbd>D</kbd> to move &nbsp;|&nbsp;
+  <kbd>R</kbd> new maze
+</div>
+
+<div id="win-msg">
+  <h2>You Win!</h2>
+  <p id="win-stats"></p>
+  <button onclick="newGame()">Play Again</button>
+</div>
+
+<script>
+const N=1,S=2,E=4,W=8;
+const OPP={[N]:S,[S]:N,[E]:W,[W]:E};
+const DX={[E]:1,[W]:-1,[N]:0,[S]:0};
+const DY={[N]:-1,[S]:1,[E]:0,[W]:0};
+
+let COLS=18,ROWS=12;
+const CELL=32;
+
+let grid,px,py,steps,startTime,won,animFrame;
+
+function generateMaze(cols,rows){
+  const g=Array.from({length:rows},()=>new Uint8Array(cols));
+  const vis=Array.from({length:rows},()=>new Uint8Array(cols));
+  function carve(cx,cy){
+    vis[cy][cx]=1;
+    const dirs=[N,S,E,W].sort(()=>Math.random()-0.5);
+    for(const d of dirs){
+      const nx=cx+DX[d], ny=cy+DY[d];
+      if(nx>=0&&nx<cols&&ny>=0&&ny<rows&&!vis[ny][nx]){
+        g[cy][cx]|=d; g[ny][nx]|=OPP[d]; carve(nx,ny);
+      }
+    }
+  }
+  carve(0,0);
+  return g;
+}
+
+function newGame(){
+  const [c,r]=document.getElementById('size').value.split(',').map(Number);
+  COLS=c; ROWS=r;
+  grid=generateMaze(COLS,ROWS);
+  px=0; py=0; steps=0; won=false;
+  startTime=performance.now();
+  document.getElementById('win-msg').style.display='none';
+  resizeCanvas();
+  if(animFrame) cancelAnimationFrame(animFrame);
+  loop();
+}
+
+function resizeCanvas(){
+  const c=document.getElementById('c');
+  c.width=COLS*CELL+1;
+  c.height=ROWS*CELL+1;
+}
+
+function draw(){
+  const canvas=document.getElementById('c');
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  const W_COLOR='#2a5c8a';
+  const PATH_COLOR='#0d1a2e';
+  const PLAYER_COLOR='#ffe066';
+  const GOAL_COLOR='#44ff88';
+  for(let row=0;row<ROWS;row++){
+    for(let col=0;col<COLS;col++){
+      const cell=grid[row][col];
+      const x=col*CELL, y=row*CELL;
+
+      // cell background
+      ctx.fillStyle=PATH_COLOR;
+      ctx.fillRect(x+1,y+1,CELL-1,CELL-1);
+
+      ctx.strokeStyle=W_COLOR;
+      ctx.lineWidth=2;
+
+      // top wall
+      if(!(cell&N)){ ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x+CELL,y); ctx.stroke(); }
+      // left wall
+      if(!(cell&W)){ ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x,y+CELL); ctx.stroke(); }
+      // right wall
+      if(!(cell&E)){ ctx.beginPath(); ctx.moveTo(x+CELL,y); ctx.lineTo(x+CELL,y+CELL); ctx.stroke(); }
+      // bottom wall
+      if(!(cell&S)){ ctx.beginPath(); ctx.moveTo(x,y+CELL); ctx.lineTo(x+CELL,y+CELL); ctx.stroke(); }
+    }
+  }
+
+  // goal
+  const gx=(COLS-1)*CELL, gy=(ROWS-1)*CELL;
+  ctx.fillStyle='#002a10';
+  ctx.fillRect(gx+1,gy+1,CELL-1,CELL-1);
+  ctx.font=`${CELL*0.6}px monospace`;
+  ctx.textAlign='center';
+  ctx.textBaseline='middle';
+  ctx.fillText('★',gx+CELL/2,gy+CELL/2);
+
+  // player
+  const cx2=px*CELL+CELL/2, cy2=py*CELL+CELL/2, r=CELL*0.3;
+  ctx.fillStyle=PLAYER_COLOR;
+  ctx.beginPath();
+  ctx.arc(cx2,cy2,r,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#333';
+  ctx.beginPath();
+  ctx.arc(cx2-r*0.3,cy2-r*0.2,r*0.2,0,Math.PI*2);
+  ctx.arc(cx2+r*0.3,cy2-r*0.2,r*0.2,0,Math.PI*2);
+  ctx.fill();
+}
+
+let elapsed=0;
+function loop(){
+  if(!won){
+    elapsed=(performance.now()-startTime)/1000;
+    document.getElementById('timer').textContent=elapsed.toFixed(1)+'s';
+  }
+  draw();
+  animFrame=requestAnimationFrame(loop);
+}
+
+function tryMove(d){
+  if(won) return;
+  const cell=grid[py][px];
+  if(!(cell&d)) return;
+  px+=DX[d]; py+=DY[d]; steps++;
+  document.getElementById('steps').textContent=steps;
+  if(px===COLS-1&&py===ROWS-1){
+    won=true;
+    elapsed=(performance.now()-startTime)/1000;
+    document.getElementById('win-stats').textContent=
+      `Steps: ${steps}  |  Time: ${elapsed.toFixed(1)}s`;
+    document.getElementById('win-msg').style.display='flex';
+  }
+}
+
+document.addEventListener('keydown',e=>{
+  const map={ArrowUp:N,ArrowDown:S,ArrowRight:E,ArrowLeft:W,
+             w:N,s:S,d:E,a:W,W:N,S:S,D:E,A:W};
+  if(map[e.key]){ e.preventDefault(); tryMove(map[e.key]); }
+  if(e.key==='r'||e.key==='R') newGame();
+});
+
+// Mobile swipe
+let tx=0,ty=0;
+document.addEventListener('touchstart',e=>{tx=e.touches[0].clientX;ty=e.touches[0].clientY;},{passive:true});
+document.addEventListener('touchend',e=>{
+  const dx=e.changedTouches[0].clientX-tx, dy=e.changedTouches[0].clientY-ty;
+  if(Math.abs(dx)>Math.abs(dy)) tryMove(dx>0?E:W);
+  else tryMove(dy>0?S:N);
+},{passive:true});
+
+newGame();
+</script>
+</body>
+</html>
